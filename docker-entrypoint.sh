@@ -23,7 +23,12 @@ if [ -z "${PKCS11_LIB_PATH:-}" ] || [ ! -f "${PKCS11_LIB_PATH}" ]; then
     export PKCS11_LIB_PATH
 fi
 
-if ! softhsm2-util --show-slots 2>/dev/null | grep -q "${token_label}"; then
+# Match a whole `Label:` field, not a substring: SoftHSM pads the label to a
+# fixed width with trailing spaces, so anchor the line and allow only
+# whitespace after the name. A bare substring test would also match a
+# different token such as "ca-token-old" and wrongly skip initialisation.
+if ! softhsm2-util --show-slots 2>/dev/null \
+    | grep -qE "^[[:space:]]*Label:[[:space:]]+${token_label}[[:space:]]*$"; then
     : "${HSM_SO_PIN:?HSM_SO_PIN is required to create the token on first start}"
     echo "docker-entrypoint: initialising token \"${token_label}\""
     softhsm2-util --init-token --free \

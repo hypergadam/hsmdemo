@@ -138,18 +138,28 @@ Notes on how the image is put together:
 
 ## Running by hand
 
-Not needed if you use `just`, but for reference — the config path is the part
-that matters:
+Not needed if you use `just`, but for reference. `.softhsm/` is gitignored, so
+a fresh checkout has no config yet and the first step has to write one —
+exactly what `just init` does:
 
 ```bash
+mkdir -p .softhsm/tokens
+printf '%s\n' \
+    "directories.tokendir = $PWD/.softhsm/tokens" \
+    'objectstore.backend = file' \
+    'objectstore.umask = 0077' \
+    > .softhsm/softhsm2.conf
+
 export SOFTHSM2_CONF="$PWD/.softhsm/softhsm2.conf"
 softhsm2-util --init-token --free --label ca-token --so-pin 5678 --pin 1234
 HSM_PIN=1234 go run .
 ```
 
-Without `SOFTHSM2_CONF`, SoftHSM falls back to `/etc/softhsm2.conf`, whose
-`directories.tokendir` is root-owned — `--show-slots` then fails with
-`Failed to enumerate object store`.
+Both halves matter, and they fail differently. Leave `SOFTHSM2_CONF` unset and
+SoftHSM falls back to `/etc/softhsm2.conf`, whose `directories.tokendir` is
+root-owned, so `--show-slots` fails with `Failed to enumerate object store`.
+Point it at a file that does not exist and there is no fallback at all —
+SoftHSM stops with `Could not load the SoftHSM configuration`.
 
 ## Security notes
 

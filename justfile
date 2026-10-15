@@ -60,7 +60,7 @@ token-init: init _require-pins
 [group('token')]
 token-ensure: init
     @slots="$(softhsm2-util --show-slots 2>/dev/null || true)"; \
-     if grep -qE 'Label:[[:space:]]+{{ token_label }}' <<< "$slots"; then \
+     if grep -qE '^[[:space:]]*Label:[[:space:]]+{{ token_label }}[[:space:]]*$' <<< "$slots"; then \
          echo 'token "{{ token_label }}" already present'; \
      else \
          just token-init; \
@@ -128,7 +128,7 @@ doctor:
 
     echo 'token'
     slots="$(softhsm2-util --show-slots 2>/dev/null || true)"
-    if grep -qE "Label:[[:space:]]+{{ token_label }}" <<< "$slots"; then
+    if grep -qE "^[[:space:]]*Label:[[:space:]]+{{ token_label }}[[:space:]]*$" <<< "$slots"; then
         pass '{{ token_label }}' 'initialised'
     else
         fail '{{ token_label }}' 'not initialised (run `just token-ensure`)'
