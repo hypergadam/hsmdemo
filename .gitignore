@@ -1,3 +1,5 @@
 .agents
 .claude
 .env
+.softhsm
+hsmdemo
