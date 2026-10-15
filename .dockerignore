@@ -1,0 +1,17 @@
+# Never let secrets or local key material into the build context.
+.env
+.softhsm/
+
+# Build output: the image compiles its own binary.
+hsmdemo
+
+# Not needed to build.
+.git/
+.gitignore
+.agents/
+.claude/
+openspec/
+README.md
+justfile
+Dockerfile
+.dockerignore

@@ -12,7 +12,10 @@ set export
 # --- Configuration --------------------------------------------------------
 
 # PKCS#11 provider. Override in .env to point at a hardware HSM.
-PKCS11_LIB := env('PKCS11_LIB', '/usr/lib64/pkcs11/libsofthsm2.so')
+# `env(name, default)` returns the default only when the name is *unset*, so a
+# set-but-empty PKCS11_LIB_PATH would yield "". Treat empty as unset.
+_pkcs11_lib_path := env('PKCS11_LIB_PATH', '')
+PKCS11_LIB_PATH  := if _pkcs11_lib_path != '' { _pkcs11_lib_path } else { '/usr/lib64/pkcs11/libsofthsm2.so' }
 
 # Project-local SoftHSM store: no root, no state shared with other projects.
 # libsofthsm2.so reads SOFTHSM2_CONF when C_Initialize runs, so softhsm2-util,
@@ -47,9 +50,7 @@ init:
 
 # Initialise the token; needs HSM_PIN and HSM_SO_PIN. Prefer `token-ensure`.
 [group('token')]
-token-init: init
-    @test -n "${HSM_PIN:-}"    || { echo 'HSM_PIN is empty -- set it in .env' >&2; exit 1; }
-    @test -n "${HSM_SO_PIN:-}" || { echo 'HSM_SO_PIN is empty -- set it in .env' >&2; exit 1; }
+token-init: init _require-pins
     softhsm2-util --init-token --free \
         --label '{{ token_label }}' \
         --so-pin "$HSM_SO_PIN" \
@@ -59,11 +60,11 @@ token-init: init
 [group('token')]
 token-ensure: init
     @slots="$(softhsm2-util --show-slots 2>/dev/null || true)"; \
-    if grep -qE 'Label:[[:space:]]+{{ token_label }}' <<< "$slots"; then \
-        echo 'token "{{ token_label }}" already present'; \
-    else \
-        just token-init; \
-    fi
+     if grep -qE 'Label:[[:space:]]+{{ token_label }}' <<< "$slots"; then \
+         echo 'token "{{ token_label }}" already present'; \
+     else \
+         just token-init; \
+     fi
 
 # Show every slot and its token info.
 [group('token')]
@@ -83,20 +84,20 @@ token-reset:
 [group('inspect')]
 objects: init
     @test -n "${HSM_PIN:-}" || { echo 'HSM_PIN is empty -- set it in .env' >&2; exit 1; }
-    pkcs11-tool --module "$PKCS11_LIB" --token-label '{{ token_label }}' \
+    pkcs11-tool --module "$PKCS11_LIB_PATH" --token-label '{{ token_label }}' \
         --login --pin "$HSM_PIN" --list-objects
 
 # Show only the CA signing key.
 [group('inspect')]
 key-info: init
     @test -n "${HSM_PIN:-}" || { echo 'HSM_PIN is empty -- set it in .env' >&2; exit 1; }
-    pkcs11-tool --module "$PKCS11_LIB" --token-label '{{ token_label }}' \
+    pkcs11-tool --module "$PKCS11_LIB_PATH" --token-label '{{ token_label }}' \
         --login --pin "$HSM_PIN" --list-objects --label '{{ key_label }}'
 
 # List the EC mechanisms the provider supports.
 [group('inspect')]
 mechanisms: init
-    pkcs11-tool --module "$PKCS11_LIB" --list-mechanisms | grep -iE 'ecdsa|ec-key'
+    pkcs11-tool --module "$PKCS11_LIB_PATH" --list-mechanisms | grep -iE 'ecdsa|ec-key'
 
 # Report every prerequisite at once: tools, library, config, token, PIN.
 [group('inspect')]
@@ -109,14 +110,13 @@ doctor:
 
     echo 'tools'
     for t in go just softhsm2-util pkcs11-tool; do
-
         if command -v "$t" >/dev/null 2>&1; then pass "$t" "$(command -v "$t")"
         else fail "$t" 'not on PATH'; fi
     done
 
     echo 'provider'
-    if [[ -f "$PKCS11_LIB" ]]; then pass 'PKCS11_LIB' "$PKCS11_LIB"
-    else fail 'PKCS11_LIB' "$PKCS11_LIB (not found)"; fi
+    if [[ -f "$PKCS11_LIB_PATH" ]]; then pass 'PKCS11_LIB_PATH' "$PKCS11_LIB_PATH"
+    else fail 'PKCS11_LIB_PATH' "$PKCS11_LIB_PATH (not found)"; fi
 
     echo 'config'
     if [[ -f "$SOFTHSM2_CONF" ]]; then pass 'SOFTHSM2_CONF' "$SOFTHSM2_CONF"
@@ -185,3 +185,43 @@ clean:
 # End-to-end walkthrough: token, signature, then the key attributes.
 [group('go')]
 demo: token-ensure run objects
+
+# --- Container ------------------------------------------------------------
+
+image  := 'hsmdemo'
+volume := 'hsmdemo-tokens'
+
+# Container engine. `CONTAINER_ENGINE=podman just image-run` also works.
+engine := env('CONTAINER_ENGINE', 'docker')
+
+# Build the image. Base images are digest-pinned in the Dockerfile.
+[group('container')]
+image-build:
+    {{ engine }} build -t '{{ image }}' .
+
+# Run the demo in a container with a throwaway token.
+[group('container')]
+image-run: _require-pins
+    {{ engine }} run --rm -e HSM_PIN -e HSM_SO_PIN '{{ image }}'
+
+# Run with a named volume, so the key survives across runs.
+[group('container')]
+image-run-persistent: _require-pins
+    {{ engine }} run --rm -e HSM_PIN -e HSM_SO_PIN \
+        -v '{{ volume }}:/var/lib/hsmdemo/tokens' '{{ image }}'
+
+# Shell into the image to inspect the token by hand.
+[group('container')]
+image-shell:
+    {{ engine }} run --rm -it --entrypoint /bin/sh '{{ image }}'
+
+# Delete the persistent token volume.
+[group('container')]
+[confirm('This deletes the container token volume and every key in it. Continue?')]
+image-volume-rm:
+    {{ engine }} volume rm '{{ volume }}'
+
+# Fail early when a PIN is missing; `set -u` cannot catch an empty dotenv value.
+_require-pins:
+    @test -n "${HSM_PIN:-}"    || { echo 'HSM_PIN is empty -- set it in .env' >&2; exit 1; }
+    @test -n "${HSM_SO_PIN:-}" || { echo 'HSM_SO_PIN is empty -- set it in .env' >&2; exit 1; }
