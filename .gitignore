@@ -1,5 +1,13 @@
+# Agent / editor tooling
 .agents
 .claude
+
+# Secrets: PINs live here
 .env
-.softhsm
+
+# Project-local SoftHSM token store, created by `just init`.
+# Contains real (test) private keys -- never commit it.
+.softhsm/
+
+# Build output
 hsmdemo
